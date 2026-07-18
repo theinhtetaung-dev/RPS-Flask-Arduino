@@ -28,31 +28,29 @@ def get_arduino_port():
         return ports[0].device
     return None
 
-def send_to_arduino(user_choice, ai_choice):
+def send_to_arduino(user_choice):
     global arduino_serial
     # Try to initialize if not currently connected
     if arduino_serial is None:
         port = get_arduino_port() or DEFAULT_PORT
         try:
-            arduino_serial = serial.Serial(port, 9600, timeout=0.1, write_timeout=0.1)
+            # IMPORTANT: Baud rate increased to 115200 to match Arduino
+            arduino_serial = serial.Serial(port, 115200, timeout=0.1, write_timeout=0.1)
             print(f"Connected to Arduino on port: {port}")
         except Exception as e:
-            # Silence error to prevent console spam, app runs fine without Arduino
             pass
 
     if arduino_serial and arduino_serial.is_open:
         try:
-            message = f"{user_choice},{ai_choice}\n"
-            arduino_serial.write(message.encode('utf-8'))
-            print(f"Sent to Arduino: {message.strip()}")
+            # Map choice to a single byte for minimal payload
+            char_map = {"Rock": "R", "Paper": "P", "Scissors": "S"}
             
-            # Wait briefly for Arduino to process and reply
-            import time
-            time.sleep(0.1)
-            while arduino_serial.in_waiting > 0:
-                response = arduino_serial.readline().decode('utf-8', errors='ignore').strip()
-                if response:
-                    print(f"  [Arduino Output]: {response}")
+            if user_choice in char_map:
+                # Send just the single character (e.g., "R") without newlines
+                message = char_map[user_choice]
+                arduino_serial.write(message.encode('utf-8'))
+                print(f"Sent to Arduino: {message}")
+                
         except Exception as e:
             print(f"Error sending/receiving data: {e}")
             try:
@@ -300,8 +298,8 @@ def resolve():
     ai = random.choice(AI_CHOICES)
     result = determine_result(player, ai["name"])
 
-    # Send choices to Arduino
-    send_to_arduino(player, ai["name"])
+    # Send ONLY the user choice to Arduino
+    send_to_arduino(player)
 
     return jsonify({
         "player":    player,
