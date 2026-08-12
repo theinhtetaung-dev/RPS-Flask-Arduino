@@ -1,58 +1,65 @@
-const int rockPin = 13;
-const int paperPin = 12;
-const int scissorsPin = 11;
+#include <Servo.h>
+
+// Define pins for servos
+const int rockPin = 9;      // Servo 1
+const int paperPin = 10;    // Servo 2
+const int scissorsPin = 11; // Servo 3
+
+// Create Servo objects
+Servo rockServo;
+Servo paperServo;
+Servo scissorsServo;
+
+// Define servo movement angles (in degrees)
+const int REST_POS = 0;     // Initial/Resting angle
+const int ACTION_POS = 90;  // Triggered angle (change to 180 if needed)
 
 void setup() {
-  // Increased baud rate to 115200 for ultra-fast serial communication
+  // Ultra-fast serial communication
   Serial.begin(115200);
 
-  pinMode(rockPin, OUTPUT);
-  pinMode(paperPin, OUTPUT);
-  pinMode(scissorsPin, OUTPUT);
+  // Attach servos to their respective pins
+  rockServo.attach(rockPin);
+  paperServo.attach(paperPin);
+  scissorsServo.attach(scissorsPin);
 
-  // Ensure all LEDs are in the closed (OFF) condition initially
-  digitalWrite(rockPin, LOW);
-  digitalWrite(paperPin, LOW);
-  digitalWrite(scissorsPin, LOW);
+  // Set initial position to 0 degrees
+  rockServo.write(REST_POS);
+  paperServo.write(REST_POS);
+  scissorsServo.write(REST_POS);
 }
 
 void loop() {
-  // Check if exactly one byte (or more) is available
+  // Check if character is available in serial buffer
   if (Serial.available() > 0) {
-    // Read the single character command instantly (No waiting for '\n')
     char command = Serial.read();
 
-    // Reset all LEDs to OFF before starting the new animation
-    digitalWrite(rockPin, LOW);
-    digitalWrite(paperPin, LOW);
-    digitalWrite(scissorsPin, LOW);
+    // Ensure all servos are back at resting position before executing
+    rockServo.write(REST_POS);
+    paperServo.write(REST_POS);
+    scissorsServo.write(REST_POS);
 
     switch (command) {
-      case 'R': // Rock -> Pin 13 ON for 1 second
-        digitalWrite(rockPin, HIGH);
-        delay(3000);
-        digitalWrite(rockPin, LOW);
+      case 'R': // Rock -> Servo 1 (Pin 9)
+        rockServo.write(ACTION_POS);
+        delay(3000); // Hold action for 3 seconds
+        rockServo.write(REST_POS);
         break;
 
-      case 'P': // Paper -> Pin 12 ON for 1 second
-        digitalWrite(paperPin, HIGH);
-        delay(3000);
-        digitalWrite(paperPin, LOW);
+      case 'P': // Paper -> Servo 2 (Pin 10)
+        paperServo.write(ACTION_POS);
+        delay(3000); // Hold action for 3 seconds
+        paperServo.write(REST_POS);
         break;
 
-      case 'S': // Scissors -> Pin 11 two flip-flops in 1 second
-        digitalWrite(scissorsPin, HIGH);
-        delay(3000);
-        digitalWrite(scissorsPin, LOW);
-        // delay(1000);
-        // digitalWrite(scissorsPin, HIGH);
-        // delay(250);
-        // digitalWrite(scissorsPin, LOW);
-        delay(250); // Total = 1000ms (1 second)
+      case 'S': // Scissors -> Servo 3 (Pin 11)
+        scissorsServo.write(ACTION_POS);
+        delay(3000); // Hold action for 3 seconds
+        scissorsServo.write(REST_POS);
         break;
-        
+
       default:
-        // Ignore any other unexpected characters (like newlines)
+        // Ignore unexpected characters (such as '\n' or '\r')
         break;
     }
   }
