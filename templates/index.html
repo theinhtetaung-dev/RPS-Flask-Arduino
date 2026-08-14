@@ -412,6 +412,23 @@
     b.textContent = text;
   }
 
+  function playBeep(frequency, duration) {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    } catch (e) {
+      console.warn("Sound playback failed:", e);
+    }
+  }
+
   /* ── Game round ──────────────────────────────────────────────────────────── */
   let busy = false;
 
@@ -435,6 +452,11 @@
 
     /* ── countdown ──────────────────────────────────────────────────────────── */
     for (const step of ['3', '2', '1', '✋  GO!']) {
+      if (step === '✋  GO!') {
+        playBeep(880, 0.3); // Play higher tone beep on 'GO!'
+      } else {
+        playBeep(600, 0.15); // Play normal countdown beep on '3', '2', '1'
+      }
       setBanner('cd', step);
       await sleep(820);
     }

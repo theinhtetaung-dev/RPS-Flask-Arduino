@@ -295,7 +295,18 @@ def resolve():
     if player in ("No Hand", "Unknown"):
         return jsonify({"error": "No valid gesture detected"}), 400
 
-    ai = random.choice(AI_CHOICES)
+    # 1. Map player gesture to the winning choice for the computer
+    if player == "Rock":
+        ai_name = "Paper"
+    elif player == "Paper":
+        ai_name = "Scissors"
+    elif player == "Scissors":
+        ai_name = "Rock"
+    else:
+        ai_name = "Rock"
+
+    # Find the choice object in AI_CHOICES
+    ai = next((c for c in AI_CHOICES if c["name"] == ai_name), AI_CHOICES[0])
     result = determine_result(player, ai["name"])
 
     # Send ONLY the user choice to Arduino
