@@ -4,6 +4,9 @@ import random
 import os
 import serial
 import serial.tools.list_ports
+import threading
+import time
+import queue
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 from mediapipe.tasks.python.vision import drawing_utils as mp_drawing
@@ -16,6 +19,7 @@ app = Flask(__name__)
 # Arduino Serial Configuration
 arduino_serial = None
 DEFAULT_PORT = "COM3"
+serial_queue = queue.Queue()
 
 def get_arduino_port():
     ports = list(serial.tools.list_ports.comports())
@@ -28,36 +32,67 @@ def get_arduino_port():
         return ports[0].device
     return None
 
-def send_to_arduino(user_choice):
+def init_arduino_serial():
     global arduino_serial
-    # Try to initialize if not currently connected
-    if arduino_serial is None:
-        port = get_arduino_port() or DEFAULT_PORT
-        try:
-            # IMPORTANT: Baud rate increased to 115200 to match Arduino
-            arduino_serial = serial.Serial(port, 115200, timeout=0.1, write_timeout=0.1)
-            print(f"Connected to Arduino on port: {port}")
-        except Exception as e:
-            pass
+    port = get_arduino_port() or DEFAULT_PORT
+    try:
+        # Changed to 9600 baud for maximum stability, removed write_timeout to prevent driver block
+        arduino_serial = serial.Serial(port, 9600, timeout=1.0)
+        arduino_serial.reset_input_buffer()
+        arduino_serial.reset_output_buffer()
+        print(f"Startup: Connected to Arduino on port: {port}")
+    except Exception as e:
+        print(f"Startup: Failed to connect to Arduino on port {port}: {e}")
 
-    if arduino_serial and arduino_serial.is_open:
+# Start serial connection in background so it doesn't block Flask and finishes resetting early
+threading.Thread(target=init_arduino_serial, daemon=True).start()
+
+def serial_worker():
+    global arduino_serial
+    while True:
         try:
-            # Map choice to a single byte for minimal payload
-            char_map = {"Rock": "R", "Paper": "P", "Scissors": "S"}
+            # Block until a choice is available
+            user_choice = serial_queue.get()
             
-            if user_choice in char_map:
-                # Send just the single character (e.g., "R") without newlines
-                message = char_map[user_choice]
-                arduino_serial.write(message.encode('utf-8'))
-                print(f"Sent to Arduino: {message}")
-                
+            # Ensure connection is open
+            if arduino_serial is None:
+                port = get_arduino_port() or DEFAULT_PORT
+                try:
+                    arduino_serial = serial.Serial(port, 9600, timeout=1.0)
+                    arduino_serial.reset_input_buffer()
+                    arduino_serial.reset_output_buffer()
+                    print(f"Worker: Connected to Arduino on port: {port}")
+                    time.sleep(2.0)  # Wait for Arduino to finish resetting
+                except Exception as e:
+                    print(f"Worker: Connection failed: {e}")
+                    serial_queue.task_done()
+                    continue
+
+            if arduino_serial and arduino_serial.is_open:
+                try:
+                    char_map = {"Rock": "R", "Paper": "P", "Scissors": "S"}
+                    if user_choice in char_map:
+                        message = char_map[user_choice]
+                        arduino_serial.write(message.encode('utf-8'))
+                        print(f"Worker: Sent to Arduino: {message}")
+                except Exception as e:
+                    print(f"Worker: Error sending data: {e}")
+                    try:
+                        arduino_serial.close()
+                    except:
+                        pass
+                    arduino_serial = None
+            
+            serial_queue.task_done()
         except Exception as e:
-            print(f"Error sending/receiving data: {e}")
-            try:
-                arduino_serial.close()
-            except:
-                pass
-            arduino_serial = None
+            print(f"Worker exception: {e}")
+
+# Start the background worker thread for serial operations
+threading.Thread(target=serial_worker, daemon=True).start()
+
+def send_to_arduino(user_choice):
+    # Enqueue choice to be sent asynchronously to avoid blocking Flask/OpenCV
+    serial_queue.put(user_choice)
 
 # MediaPipe Hand Landmarker (Tasks API >= 0.10)
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
@@ -72,10 +107,53 @@ hand_options = mp_vision.HandLandmarkerOptions(
 )
 landmarker = mp_vision.HandLandmarker.create_from_options(hand_options)
 
-# OpenCV Camera
-camera = cv2.VideoCapture(0)
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+class VideoCaptureThread:
+    def __init__(self, source):
+        self.cap = cv2.VideoCapture(source)
+        # Set buffer size to 1 to reduce lag if supported by the backend
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.ret = False
+        self.frame = None
+        self.frame_id = 0
+        self.lock = threading.Lock()
+        self.running = True
+        self.frame_ready = threading.Event()
+        self.thread = threading.Thread(target=self._update, daemon=True)
+        self.thread.start()
+
+    def _update(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.frame = frame
+                    self.ret = ret
+                    self.frame_id += 1
+                self.frame_ready.set()
+            else:
+                time.sleep(0.01)
+
+    def read(self):
+        if not self.frame_ready.is_set():
+            self.frame_ready.wait(timeout=5.0)
+        with self.lock:
+            if self.frame is not None:
+                return self.ret, self.frame.copy(), self.frame_id
+            return False, None, 0
+
+    def release(self):
+        self.running = False
+        self.thread.join(timeout=1.0)
+        self.cap.release()
+
+# OpenCV Camera (Supports CAMERA_SOURCE environment variable for DroidCam indices or IP URLs)
+camera_source = os.environ.get("CAMERA_SOURCE", "0")
+if camera_source.isdigit():
+    camera_source = int(camera_source)
+
+camera = VideoCaptureThread(camera_source)
 
 # Finger Landmark IDs
 FINGER_TIPS = [8, 12, 16, 20]
@@ -93,6 +171,13 @@ AI_CHOICES = [
     {"name": "Scissors", "emoji": "✌️"},
     {"name": "Paper",    "emoji": "✋"},
 ]
+
+# Game state for 5-match sequence
+game_allowed_wins = random.choice([0, 1])
+game_user_wins = 0
+game_match_count = 0
+game_draw_count = 0
+game_lose_count = 0
 
 
 # ── Gesture helpers ────────────────────────────────────────────────────────────
@@ -116,56 +201,59 @@ def get_hand_orientation(landmarks) -> str:
 
 def count_open_fingers(landmarks, handedness_label: str) -> int:
     """
-    Count extended fingers.
-    - Vertical hand  (✋): fingers extend upward  → use y-axis comparison.
-    - Horizontal hand (🫱): fingers extend sideways → use x-axis comparison.
-    The thumb always uses the opposite axis to the fingers.
+    Count extended fingers by rotating the hand landmarks to be vertical
+    relative to the wrist, then applying vertical counting logic.
+    This makes the detection rotation-invariant.
     """
+    import math
+
+    class RotatedLandmark:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    wrist = landmarks[0]
+    mid_mcp = landmarks[9]
+
+    # Calculate direction vector from wrist to middle finger MCP
+    dx = mid_mcp.x - wrist.x
+    dy = mid_mcp.y - wrist.y
+
+    # Angle of the hand direction vector
+    theta = math.atan2(dy, dx)
+    
+    # Angle to rotate by to make the hand point straight up (-pi/2)
+    alpha = -math.pi / 2.0 - theta
+
+    cos_a = math.cos(alpha)
+    sin_a = math.sin(alpha)
+
+    # Rotate all landmarks around the wrist
+    rotated = []
+    for lm in landmarks:
+        tx = lm.x - wrist.x
+        ty = lm.y - wrist.y
+        rx = tx * cos_a - ty * sin_a + wrist.x
+        ry = tx * sin_a + ty * cos_a + wrist.y
+        rotated.append(RotatedLandmark(rx, ry))
+
     open_count = 0
-    orientation = get_hand_orientation(landmarks)
 
-    if orientation == "vertical":
-        # ── Vertical mode (original logic) ────────────────────────────────
-        # Thumb: x-axis (moves left/right when hand is upright)
-        # After mirroring, physical Right hand → 'Left' label in MediaPipe
-        if handedness_label == "Left":
-            if landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x:
-                open_count += 1
-        else:
-            if landmarks[THUMB_TIP].x > landmarks[THUMB_IP].x:
-                open_count += 1
+    # Thumb: dynamic x-axis comparison based on index vs pinky position
+    index_mcp_x = rotated[5].x
+    pinky_mcp_x = rotated[17].x
 
-        # Index–Pinky: tip above pip in image coords (y decreases upward)
-        for tip_id, pip_id in zip(FINGER_TIPS, FINGER_PIPS):
-            if landmarks[tip_id].y < landmarks[pip_id].y:
-                open_count += 1
-
+    if index_mcp_x > pinky_mcp_x:
+        if rotated[THUMB_TIP].x > rotated[THUMB_IP].x:
+            open_count += 1
     else:
-        # ── Horizontal mode (🫱 / 🫲) ──────────────────────────────────────
-        # Fingers point sideways, so extension is along the x-axis.
-        # Determine which direction the fingers point:
-        #   wrist x < mid_mcp x  → fingers point RIGHT
-        #   wrist x > mid_mcp x  → fingers point LEFT
-        fingers_point_right = landmarks[9].x > landmarks[0].x
+        if rotated[THUMB_TIP].x < rotated[THUMB_IP].x:
+            open_count += 1
 
-        # Thumb: now extends along y-axis when hand is horizontal
-        if fingers_point_right:
-            # Right-pointing hand: thumb tip above thumb IP
-            if landmarks[THUMB_TIP].y < landmarks[THUMB_IP].y:
-                open_count += 1
-        else:
-            # Left-pointing hand: thumb tip below thumb IP
-            if landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y:
-                open_count += 1
-
-        # Index–Pinky: tip further along x than pip
-        for tip_id, pip_id in zip(FINGER_TIPS, FINGER_PIPS):
-            if fingers_point_right:
-                if landmarks[tip_id].x > landmarks[pip_id].x:
-                    open_count += 1
-            else:
-                if landmarks[tip_id].x < landmarks[pip_id].x:
-                    open_count += 1
+    # Index–Pinky: tip above pip in rotated coordinates (y decreases upward)
+    for tip_id, pip_id in zip(FINGER_TIPS, FINGER_PIPS):
+        if rotated[tip_id].y < rotated[pip_id].y:
+            open_count += 1
 
     return open_count
 
@@ -195,10 +283,16 @@ def determine_result(player: str, ai: str) -> str:
 def generate_frames():
     global current_gesture, _timestamp_ms
 
+    last_frame_id = -1
     while True:
-        success, frame = camera.read()
+        success, frame, frame_id = camera.read()
         if not success:
             break
+
+        if frame_id == last_frame_id:
+            time.sleep(0.005)
+            continue
+        last_frame_id = frame_id
 
         # Mirror for natural selfie view
         frame = cv2.flip(frame, 1)
@@ -285,38 +379,73 @@ def get_ai_choice():
     return jsonify(choice)
 
 
+@app.route("/reset_game", methods=["POST"])
+def reset_game():
+    """Reset the game state for a new 5-match sequence."""
+    global game_allowed_wins, game_user_wins, game_match_count, game_draw_count, game_lose_count
+    game_allowed_wins = random.choice([0, 1])
+    game_user_wins = 0
+    game_match_count = 0
+    game_draw_count = 0
+    game_lose_count = 0
+    return jsonify({"status": "success", "allowed_wins": game_allowed_wins})
+
+
 @app.route("/resolve")
 def resolve():
     """
     Snapshot the current player gesture, pick AI move, compute result.
-    Returns JSON with player, ai_name, ai_emoji, result.
+    Returns JSON with player, ai_name, ai_emoji, result, and progress stats.
     """
+    global game_allowed_wins, game_user_wins, game_match_count, game_draw_count, game_lose_count
+
     player = current_gesture
     if player in ("No Hand", "Unknown"):
         return jsonify({"error": "No valid gesture detected"}), 400
 
-    # 1. Map player gesture to the winning choice for the computer
-    if player == "Rock":
-        ai_name = "Paper"
-    elif player == "Paper":
-        ai_name = "Scissors"
-    elif player == "Scissors":
-        ai_name = "Rock"
+    cheat_sheet = {
+        "Rock": "Paper",
+        "Paper": "Scissors",
+        "Scissors": "Rock"
+    }
+
+    game_match_count += 1
+
+    if game_allowed_wins > 0:
+        choices = ["Rock", "Paper", "Scissors"]
+        ai_name = random.choice(choices)
+        result = determine_result(player, ai_name)
+        
+        if result == "WIN":
+            game_allowed_wins -= 1
+            game_user_wins += 1
+        elif result == "DRAW":
+            game_draw_count += 1
+        else:
+            game_lose_count += 1
     else:
-        ai_name = "Rock"
+        ai_name = cheat_sheet.get(player, "Rock")
+        result = determine_result(player, ai_name)
+        game_lose_count += 1
 
     # Find the choice object in AI_CHOICES
     ai = next((c for c in AI_CHOICES if c["name"] == ai_name), AI_CHOICES[0])
-    result = determine_result(player, ai["name"])
 
     # Send ONLY the user choice to Arduino
     send_to_arduino(player)
 
+    game_over = (game_match_count >= 5)
+
     return jsonify({
-        "player":    player,
-        "ai_name":   ai["name"],
-        "ai_emoji":  ai["emoji"],
-        "result":    result,
+        "player":       player,
+        "ai_name":      ai["name"],
+        "ai_emoji":     ai["emoji"],
+        "result":       result,
+        "match_count":  game_match_count,
+        "user_wins":    game_user_wins,
+        "draw_count":   game_draw_count,
+        "lose_count":   game_lose_count,
+        "game_over":    game_over,
     })
 
 

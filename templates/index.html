@@ -295,6 +295,120 @@
       gap: 12px;
       font-size: 0.64rem; color: var(--muted); opacity: .7;
     }
+
+    /* ── Modal Box Styles ─────────────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 10, 24, 0.85);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 30px;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 20px var(--aglow);
+      transform: scale(0.8) translateY(20px);
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .modal-overlay.active .modal-card {
+      transform: scale(1) translateY(0);
+    }
+
+    .modal-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at top center, rgba(124, 110, 245, 0.15), transparent 70%);
+    }
+
+    .modal-title {
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-bottom: 15px;
+      background: linear-gradient(120deg, #fff 40%, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .modal-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin: 25px 0;
+    }
+
+    .modal-stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: var(--rs);
+      font-size: 0.95rem;
+    }
+
+    .modal-stat-label {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .modal-stat-val {
+      font-weight: 800;
+      font-size: 1.1rem;
+    }
+
+    .modal-stat-val.win { color: var(--green); }
+    .modal-stat-val.draw { color: var(--gold); }
+    .modal-stat-val.lose { color: var(--red); }
+
+    .modal-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: var(--rs);
+      font-family: var(--font);
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent) 0%, #a78bfa 100%);
+      color: #fff;
+      box-shadow: 0 4px 15px var(--aglow);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .modal-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px var(--aglow);
+    }
+
+    .modal-btn:active {
+      transform: translateY(0);
+    }
   </style>
 </head>
 <body>
@@ -358,6 +472,11 @@
         </div>
       </div>
 
+      <!-- Match Progress -->
+      <div class="match-progress" id="match-progress" style="text-align: center; font-size: 0.85rem; font-weight: 700; color: var(--muted); margin-top: 4px; margin-bottom: 2px;">
+        Round 0 of 5
+      </div>
+
       <!-- Result -->
       <div class="banner idle" id="banner">Press Play to start</div>
 
@@ -379,16 +498,33 @@
 
 </div><!-- /shell -->
 
+<!-- Results Modal Overlay -->
+<div class="modal-overlay" id="results-modal">
+  <div class="modal-card">
+    <div class="modal-title">🏆 Game Summary</div>
+    <div class="modal-stats">
+      <div class="modal-stat-row">
+        <span class="modal-stat-label">Total Matches</span>
+        <span class="modal-stat-val" id="modal-total">5</span>
+      </div>
+      <div class="modal-stat-row">
+        <span class="modal-stat-label">Wins</span>
+        <span class="modal-stat-val win" id="modal-wins">0</span>
+      </div>
+      <div class="modal-stat-row">
+        <span class="modal-stat-label">Losses</span>
+        <span class="modal-stat-val lose" id="modal-losses">0</span>
+      </div>
+      <div class="modal-stat-row">
+        <span class="modal-stat-label">Draws</span>
+        <span class="modal-stat-val draw" id="modal-draws">0</span>
+      </div>
+    </div>
+    <button class="modal-btn" onclick="resetGame()">Play Again</button>
+  </div>
+</div>
+
 <script>
-  /* ── Score state ─────────────────────────────────────────────────────────── */
-  const score = { win: 0, draw: 0, lose: 0 };
-
-  function addScore(r) {
-    if (r === 'WIN')  { score.win++;  document.getElementById('sw').textContent = score.win;  }
-    if (r === 'DRAW') { score.draw++; document.getElementById('sd').textContent = score.draw; }
-    if (r === 'LOSE') { score.lose++; document.getElementById('sl').textContent = score.lose; }
-  }
-
   /* ── Gesture polling (every 300 ms) ─────────────────────────────────────── */
   const G_EMOJI = { Rock:'✊', Scissors:'✌️', Paper:'✋', 'No Hand':'🤚', Unknown:'❓' };
 
@@ -428,6 +564,39 @@
       console.warn("Sound playback failed:", e);
     }
   }
+
+  function showResultsModal(total, wins, losses, draws) {
+    document.getElementById('modal-total').textContent = total;
+    document.getElementById('modal-wins').textContent = wins;
+    document.getElementById('modal-losses').textContent = losses;
+    document.getElementById('modal-draws').textContent = draws;
+    document.getElementById('results-modal').classList.add('active');
+  }
+
+  async function resetGame() {
+    try {
+      await fetch('/reset_game', { method: 'POST' });
+      // Reset UI scores
+      document.getElementById('sw').textContent = '0';
+      document.getElementById('sd').textContent = '0';
+      document.getElementById('sl').textContent = '0';
+      document.getElementById('match-progress').textContent = 'Round 0 of 5';
+      
+      // Reset AI card
+      document.getElementById('ai-em').textContent = '🤔';
+      document.getElementById('ai-txt').textContent = 'Waiting…';
+      setBanner('idle', 'Press Play to start');
+      
+      // Hide modal
+      document.getElementById('results-modal').classList.remove('active');
+    } catch (e) {
+      console.error("Failed to reset game:", e);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    resetGame();
+  });
 
   /* ── Game round ──────────────────────────────────────────────────────────── */
   let busy = false;
@@ -477,7 +646,7 @@
         b.className   = 'banner err shake';
         b.textContent = '⚠️  No hand detected — try again!';
       } else {
-        const { player, ai_name, ai_emoji, result } = await res.json();
+        const { player, ai_name, ai_emoji, result, match_count, user_wins, draw_count, lose_count, game_over } = await res.json();
 
         /* reveal AI choice */
         aiEm.className = '';
@@ -494,7 +663,19 @@
         };
         const [cls, text] = MAP[result] ?? ['idle', '?'];
         setBanner(cls, text);
-        addScore(result);
+
+        // Update scores and match count in UI
+        document.getElementById('sw').textContent = user_wins;
+        document.getElementById('sd').textContent = draw_count;
+        document.getElementById('sl').textContent = lose_count;
+        document.getElementById('match-progress').textContent = `Round ${match_count} of 5`;
+
+        // If game is over, wait a bit and show the modal box
+        if (game_over) {
+          setTimeout(() => {
+            showResultsModal(match_count, user_wins, lose_count, draw_count);
+          }, 1500);
+        }
       }
 
     } catch (_) {

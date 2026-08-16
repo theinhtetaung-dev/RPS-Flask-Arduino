@@ -110,6 +110,45 @@ pipenv run python app.py
 The application will start, scan COM ports to detect the Arduino automatically, and be accessible at:
 👉 **`http://localhost:5000`**
 
+### 5. Using DroidCam as a Webcam (Optional)
+If you want to use **DroidCam** instead of your default built-in webcam, you can configure it in one of two ways:
+
+#### Option A: Direct WiFi IP Stream (Recommended)
+You do not need the DroidCam Client app on your computer for this.
+1. Open DroidCam on your phone and note the **WiFi IP** and **Port** (e.g., `192.168.1.50` and `4747`).
+2. Run the application with the `CAMERA_SOURCE` environment variable pointing to the MJPEG feed URL:
+   * **Windows PowerShell**:
+     ```powershell
+     $env:CAMERA_SOURCE="http://192.168.1.50:4747/video"
+     python app.py
+     ```
+   * **Windows Command Prompt (cmd)**:
+     ```cmd
+     set CAMERA_SOURCE=http://192.168.1.50:4747/video
+     python app.py
+     ```
+   * **Linux / macOS**:
+     ```bash
+     export CAMERA_SOURCE="http://192.168.1.50:4747/video"
+     python app.py
+     ```
+
+#### Option B: DroidCam Client (Virtual Camera Device)
+1. Install and open the **DroidCam Client** app on your PC.
+2. Connect to your phone (via USB or WiFi) so the virtual camera device is active.
+3. Determine the camera index of the DroidCam virtual camera (e.g., index `1` or `2`).
+4. Run the application with `CAMERA_SOURCE` set to that index:
+   * **Windows PowerShell**:
+     ```powershell
+     $env:CAMERA_SOURCE="1"
+     python app.py
+     ```
+   * **Windows Command Prompt (cmd)**:
+     ```cmd
+     set CAMERA_SOURCE=1
+     python app.py
+     ```
+
 ---
 
 ## 🧪 How to Test the Project
