@@ -11,7 +11,7 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 from mediapipe.tasks.python.vision import drawing_utils as mp_drawing
 from mediapipe.tasks.python.vision import drawing_styles as mp_drawing_styles
-from flask import Flask, Response, render_template, jsonify
+from flask import Flask, Response, render_template, jsonify, send_from_directory
 
 # Flask App
 app = Flask(__name__)
@@ -390,6 +390,12 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/recording/<path:filename>")
+def serve_recording(filename):
+    """Serve game audio recording files."""
+    return send_from_directory("Recording", filename)
+
+
 @app.route("/video_feed")
 def video_feed():
     return Response(
@@ -468,6 +474,15 @@ def resolve():
 
     game_over = (game_match_count >= 5)
 
+    # Determine which audio recording to play based on outcome
+    audio_path = None
+    if result == "WIN":
+        audio_path = "UserWin/HanZaw-UserWin.ogg"
+    elif result == "DRAW":
+        audio_path = "Draw/HanZaw.ogg"
+    elif result == "LOSE":
+        audio_path = random.choice(["UserLose/HanZaw-UserLose.ogg", "UserLose/HanZaw-UserLose2.ogg"])
+
     return jsonify({
         "player":       player,
         "ai_name":      ai["name"],
@@ -478,6 +493,7 @@ def resolve():
         "draw_count":   game_draw_count,
         "lose_count":   game_lose_count,
         "game_over":    game_over,
+        "audio_url":    f"/recording/{audio_path}" if audio_path else None,
     })
 
 

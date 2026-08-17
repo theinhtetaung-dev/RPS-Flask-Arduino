@@ -527,10 +527,12 @@
 <script>
   /* ── Gesture polling (every 300 ms) ─────────────────────────────────────── */
   const G_EMOJI = { Rock:'✊', Scissors:'✌️', Paper:'✋', 'No Hand':'🤚', Unknown:'❓' };
+  let latestGesture = 'No Hand';
 
   setInterval(async () => {
     try {
       const { gesture } = await (await fetch('/current_gesture')).json();
+      latestGesture = gesture;
       document.getElementById('p-emoji').textContent = G_EMOJI[gesture] ?? '🤚';
       document.getElementById('p-label').textContent =
         (gesture === 'No Hand' || gesture === 'Unknown') ? 'Show your hand…' : gesture;
@@ -620,14 +622,44 @@
     setBanner('idle', '');
 
     /* ── countdown ──────────────────────────────────────────────────────────── */
+    const countdownAudios = [
+      '/recording/Countdown/HNO.ogg',
+      '/recording/Countdown/THOON.ogg'
+    ];
+    const selectedCountdown = countdownAudios[Math.floor(Math.random() * countdownAudios.length)];
+    const countdownAudio = new Audio(selectedCountdown);
+
+    // Wait for audio metadata to load to get its duration, defaulting to 3.2s
+    if (isNaN(countdownAudio.duration)) {
+      await new Promise(resolve => {
+        countdownAudio.addEventListener('loadedmetadata', resolve, { once: true });
+        countdownAudio.addEventListener('error', resolve, { once: true });
+        setTimeout(resolve, 1000); // 1-second safety timeout
+      });
+    }
+
+    const duration = countdownAudio.duration || 3.2;
+    const stepDuration = (duration * 1000) / 4;
+
+    countdownAudio.play().catch(e => console.warn("Failed to play countdown audio:", e));
+
     for (const step of ['3', '2', '1', '✋  GO!']) {
-      if (step === '✋  GO!') {
-        playBeep(880, 0.3); // Play higher tone beep on 'GO!'
-      } else {
-        playBeep(600, 0.15); // Play normal countdown beep on '3', '2', '1'
-      }
       setBanner('cd', step);
-      await sleep(820);
+      await sleep(stepDuration);
+    }
+
+    // Wait until a valid hand gesture is detected at the end of the audio/countdown
+    if (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
+      // Play appropriate error audio effect
+      const errorAudioFile = latestGesture === 'Unknown'
+        ? '/recording/Error/WrongGesture-HTS.ogg'
+        : '/recording/Error/WrongTiming-HTS.ogg';
+      new Audio(errorAudioFile).play().catch(e => console.warn("Failed to play error audio:", e));
+
+      setBanner('err', '⚠️ Show your hand...');
+      while (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
+        await sleep(100);
+      }
     }
 
     /* ── call /resolve ───────────────────────────────────────────────────────── */
@@ -638,6 +670,7 @@
 
       if (!res.ok) {
         /* no valid hand detected */
+        new Audio('/recording/Error/WrongGesture-HTS.ogg').play().catch(e => {});
         aiEm.textContent  = '❌';
         aiTxt.textContent = 'No hand';
         const b = document.getElementById('banner');
@@ -646,7 +679,13 @@
         b.className   = 'banner err shake';
         b.textContent = '⚠️  No hand detected — try again!';
       } else {
-        const { player, ai_name, ai_emoji, result, match_count, user_wins, draw_count, lose_count, game_over } = await res.json();
+        const { player, ai_name, ai_emoji, result, match_count, user_wins, draw_count, lose_count, game_over, audio_url } = await res.json();
+
+        /* play outcome audio recording */
+        if (audio_url) {
+          const audio = new Audio(audio_url);
+          audio.play().catch(e => console.warn("Failed to play audio:", e));
+        }
 
         /* reveal AI choice */
         aiEm.className = '';
@@ -679,6 +718,7 @@
       }
 
     } catch (_) {
+      new Audio('/recording/Error/WrongGesture-HTS.ogg').play().catch(e => {});
       document.getElementById('ai-dots').style.display = 'none';
       setBanner('err', 'Connection error — try again!');
     }
