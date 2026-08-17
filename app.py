@@ -23,10 +23,16 @@ serial_queue = queue.Queue()
 
 def get_arduino_port():
     ports = list(serial.tools.list_ports.comports())
+    # 1st pass: Prioritize actual Arduino devices (like "Arduino Uno (COM11)")
+    for p in ports:
+        desc = p.description.lower()
+        if "arduino" in desc:
+            return p.device
+    # 2nd pass: Fallback to other common serial descriptions
     for p in ports:
         desc = p.description.lower()
         hwid = p.hwid.lower()
-        if "arduino" in desc or "ch340" in desc or "usb" in desc or "serial" in desc:
+        if "ch340" in desc or "usb" in desc or "serial" in desc:
             return p.device
     if ports:
         return ports[0].device
@@ -36,8 +42,21 @@ def init_arduino_serial():
     global arduino_serial
     port = get_arduino_port() or DEFAULT_PORT
     try:
-        # Changed to 9600 baud for maximum stability, removed write_timeout to prevent driver block
-        arduino_serial = serial.Serial(port, 9600, timeout=1.0)
+        # Disable hardware flow control and add a write timeout to prevent thread hangs
+        arduino_serial = serial.Serial(
+            port, 
+            9600, 
+            timeout=1.0, 
+            write_timeout=2.0,
+            rtscts=False,
+            dsrdtr=False
+        )
+        # Release DTR/RTS to prevent holding the Arduino in a reset state
+        try:
+            arduino_serial.dtr = False
+            arduino_serial.rts = False
+        except:
+            pass
         arduino_serial.reset_input_buffer()
         arduino_serial.reset_output_buffer()
         print(f"Startup: Connected to Arduino on port: {port}")
@@ -55,16 +74,29 @@ def serial_worker():
             user_choice = serial_queue.get()
             
             # Ensure connection is open
-            if arduino_serial is None:
+            if arduino_serial is None or not arduino_serial.is_open:
                 port = get_arduino_port() or DEFAULT_PORT
                 try:
-                    arduino_serial = serial.Serial(port, 9600, timeout=1.0)
+                    arduino_serial = serial.Serial(
+                        port, 
+                        9600, 
+                        timeout=1.0, 
+                        write_timeout=2.0,
+                        rtscts=False,
+                        dsrdtr=False
+                    )
+                    try:
+                        arduino_serial.dtr = False
+                        arduino_serial.rts = False
+                    except:
+                        pass
                     arduino_serial.reset_input_buffer()
                     arduino_serial.reset_output_buffer()
                     print(f"Worker: Connected to Arduino on port: {port}")
                     time.sleep(2.0)  # Wait for Arduino to finish resetting
                 except Exception as e:
                     print(f"Worker: Connection failed: {e}")
+                    arduino_serial = None
                     serial_queue.task_done()
                     continue
 
@@ -431,8 +463,8 @@ def resolve():
     # Find the choice object in AI_CHOICES
     ai = next((c for c in AI_CHOICES if c["name"] == ai_name), AI_CHOICES[0])
 
-    # Send ONLY the user choice to Arduino
-    send_to_arduino(player)
+    # Send ONLY the AI choice to Arduino
+    send_to_arduino(ai_name)
 
     game_over = (game_match_count >= 5)
 
