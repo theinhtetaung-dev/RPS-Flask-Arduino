@@ -648,6 +648,10 @@
       await sleep(stepDuration);
     }
 
+    // Stop countdown audio to prevent overlap/conflict with outcome voice
+    countdownAudio.pause();
+    countdownAudio.currentTime = 0;
+
     // Wait until a valid hand gesture is detected at the end of the audio/countdown
     if (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
       setBanner('err', '⚠️ Show your hand...');
