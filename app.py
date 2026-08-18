@@ -441,33 +441,19 @@ def resolve():
     if player in ("No Hand", "Unknown"):
         return jsonify({"error": "No valid gesture detected"}), 400
 
-    cheat_sheet = {
-        "Rock": "Paper",
-        "Paper": "Scissors",
-        "Scissors": "Rock"
-    }
-
     game_match_count += 1
 
-    if game_allowed_wins > 0:
-        choices = ["Rock", "Paper", "Scissors"]
-        ai_name = random.choice(choices)
-        result = determine_result(player, ai_name)
-        
-        if result == "WIN":
-            game_allowed_wins -= 1
-            game_user_wins += 1
-        elif result == "DRAW":
-            game_draw_count += 1
-        else:
-            game_lose_count += 1
+    # Standard, fair AI choice
+    ai = random.choice(AI_CHOICES)
+    ai_name = ai["name"]
+    result = determine_result(player, ai_name)
+    
+    if result == "WIN":
+        game_user_wins += 1
+    elif result == "DRAW":
+        game_draw_count += 1
     else:
-        ai_name = cheat_sheet.get(player, "Rock")
-        result = determine_result(player, ai_name)
         game_lose_count += 1
-
-    # Find the choice object in AI_CHOICES
-    ai = next((c for c in AI_CHOICES if c["name"] == ai_name), AI_CHOICES[0])
 
     # Send ONLY the AI choice to Arduino
     send_to_arduino(ai_name)

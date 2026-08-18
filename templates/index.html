@@ -650,12 +650,6 @@
 
     // Wait until a valid hand gesture is detected at the end of the audio/countdown
     if (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
-      // Play appropriate error audio effect
-      const errorAudioFile = latestGesture === 'Unknown'
-        ? '/recording/Error/WrongGesture-HTS.ogg'
-        : '/recording/Error/WrongTiming-HTS.ogg';
-      new Audio(errorAudioFile).play().catch(e => console.warn("Failed to play error audio:", e));
-
       setBanner('err', '⚠️ Show your hand...');
       while (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
         await sleep(100);
@@ -670,7 +664,6 @@
 
       if (!res.ok) {
         /* no valid hand detected */
-        new Audio('/recording/Error/WrongGesture-HTS.ogg').play().catch(e => {});
         aiEm.textContent  = '❌';
         aiTxt.textContent = 'No hand';
         const b = document.getElementById('banner');
@@ -718,7 +711,6 @@
       }
 
     } catch (_) {
-      new Audio('/recording/Error/WrongGesture-HTS.ogg').play().catch(e => {});
       document.getElementById('ai-dots').style.display = 'none';
       setBanner('err', 'Connection error — try again!');
     }
