@@ -289,6 +289,27 @@
     .play-btn:active:not(:disabled){ transform: translateY(0); }
     .play-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+    /* ── Reset Button ──────────────────────────────────────────────────────── */
+    .reset-btn {
+      flex-shrink: 0;
+      width: 100%; padding: 13px;
+      border: 1px solid var(--border); border-radius: var(--rs);
+      font-family: var(--font); font-size: .95rem; font-weight: 800;
+      letter-spacing: .06em; cursor: pointer;
+      background: var(--card2);
+      color: var(--muted);
+      transition: transform .15s, box-shadow .15s, opacity .15s, color .15s, border-color .15s;
+    }
+    .reset-btn:hover:not(:disabled) { 
+      background: rgba(248, 113, 113, 0.08); 
+      border-color: var(--red); 
+      color: var(--red); 
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(248, 113, 113, 0.15);
+    }
+    .reset-btn:active:not(:disabled) { transform: translateY(0); }
+    .reset-btn:disabled { opacity: .5; cursor: not-allowed; }
+
     /* ════════════════════════════ FOOTER ══════════════════════════════════════ */
     footer {
       display: flex; align-items: center; justify-content: center;
@@ -474,7 +495,7 @@
 
       <!-- Match Progress -->
       <div class="match-progress" id="match-progress" style="text-align: center; font-size: 0.85rem; font-weight: 700; color: var(--muted); margin-top: 4px; margin-bottom: 2px;">
-        Round 0 of 5
+        Round 0 of 3
       </div>
 
       <!-- Result -->
@@ -483,6 +504,9 @@
       <!-- CTA -->
       <button class="play-btn" id="play-btn" onclick="startRound()">
         ▶ &nbsp;Play Now
+      </button>
+      <button class="reset-btn" id="reset-btn" onclick="resetGame()">
+        🔄 &nbsp;Reset Match
       </button>
 
     </div><!-- /panel -->
@@ -528,8 +552,10 @@
   /* ── Gesture polling (every 300 ms) ─────────────────────────────────────── */
   const G_EMOJI = { Rock:'✊', Scissors:'✌️', Paper:'✋', 'No Hand':'🤚', Unknown:'❓' };
   let latestGesture = 'No Hand';
+  let countdownIndex = 0;
 
   setInterval(async () => {
+    if (busy) return;
     try {
       const { gesture } = await (await fetch('/current_gesture')).json();
       latestGesture = gesture;
@@ -567,6 +593,25 @@
     }
   }
 
+  let errorAudio = null;
+  async function playErrorSound() {
+    try {
+      const res = await fetch('/error_audio');
+      if (res.ok) {
+        const { audio_url } = await res.json();
+        if (audio_url) {
+          if (errorAudio) {
+            errorAudio.pause();
+          }
+          errorAudio = new Audio(audio_url);
+          errorAudio.play().catch(e => console.warn("Failed to play error sound:", e));
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch error audio:", e);
+    }
+  }
+
   function showResultsModal(total, wins, losses, draws) {
     document.getElementById('modal-total').textContent = total;
     document.getElementById('modal-wins').textContent = wins;
@@ -582,7 +627,7 @@
       document.getElementById('sw').textContent = '0';
       document.getElementById('sd').textContent = '0';
       document.getElementById('sl').textContent = '0';
-      document.getElementById('match-progress').textContent = 'Round 0 of 5';
+      document.getElementById('match-progress').textContent = 'Round 0 of 3';
       
       // Reset AI card
       document.getElementById('ai-em').textContent = '🤔';
@@ -608,11 +653,13 @@
     busy = true;
 
     const btn   = document.getElementById('play-btn');
+    const rstBtn = document.getElementById('reset-btn');
     const aiEm  = document.getElementById('ai-em');
     const aiTxt = document.getElementById('ai-txt');
     const aiDot = document.getElementById('ai-dots');
 
     btn.disabled = true;
+    if (rstBtn) rstBtn.disabled = true;
 
     /* reset AI panel */
     aiEm.className  = 'ai-em';
@@ -626,7 +673,8 @@
       '/recording/Countdown/HNO.ogg',
       '/recording/Countdown/THOON.ogg'
     ];
-    const selectedCountdown = countdownAudios[Math.floor(Math.random() * countdownAudios.length)];
+    const selectedCountdown = countdownAudios[countdownIndex];
+    countdownIndex = (countdownIndex + 1) % countdownAudios.length;
     const countdownAudio = new Audio(selectedCountdown);
 
     // Wait for audio metadata to load to get its duration, defaulting to 3.2s
@@ -648,16 +696,12 @@
       await sleep(stepDuration);
     }
 
-    // Stop countdown audio to prevent overlap/conflict with outcome voice
-    countdownAudio.pause();
-    countdownAudio.currentTime = 0;
-
-    // Wait until a valid hand gesture is detected at the end of the audio/countdown
-    if (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
-      setBanner('err', '⚠️ Show your hand...');
-      while (latestGesture === 'No Hand' || latestGesture === 'Unknown') {
-        await sleep(100);
-      }
+    // Wait for the countdown audio to finish playing naturally to avoid cutting it off
+    if (!countdownAudio.ended) {
+      await new Promise(resolve => {
+        countdownAudio.addEventListener('ended', resolve, { once: true });
+        setTimeout(resolve, 1000); // 1-second safety fallback
+      });
     }
 
     /* ── call /resolve ───────────────────────────────────────────────────────── */
@@ -677,6 +721,10 @@
         b.textContent = '⚠️  No hand detected — try again!';
       } else {
         const { player, ai_name, ai_emoji, result, match_count, user_wins, draw_count, lose_count, game_over, audio_url } = await res.json();
+
+        // Update player's gesture pill with the randomly generated gesture
+        document.getElementById('p-emoji').textContent = G_EMOJI[player] ?? '🤚';
+        document.getElementById('p-label').textContent = player;
 
         /* play outcome audio recording */
         if (audio_url) {
@@ -704,7 +752,7 @@
         document.getElementById('sw').textContent = user_wins;
         document.getElementById('sd').textContent = draw_count;
         document.getElementById('sl').textContent = lose_count;
-        document.getElementById('match-progress').textContent = `Round ${match_count} of 5`;
+        document.getElementById('match-progress').textContent = `Round ${match_count} of 3`;
 
         // If game is over, wait a bit and show the modal box
         if (game_over) {
@@ -721,6 +769,7 @@
 
     await sleep(1600);
     btn.disabled = false;
+    if (rstBtn) rstBtn.disabled = false;
     busy = false;
   }
 </script>

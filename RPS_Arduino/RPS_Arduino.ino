@@ -34,8 +34,8 @@ const unsigned long POSE_DURATION = 1500;
 const unsigned long RETURN_DURATION = 1500;
 
 void setup() {
-  // Serial communication at 9600 baud for stability
-  Serial.begin(9600);
+  // Serial communication at 115200 baud for stability
+  Serial.begin(115200);
 
   // Attach servos to their respective Arduino pins
   servo1.attach(3);

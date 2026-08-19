@@ -45,7 +45,7 @@ def init_arduino_serial():
         # Disable hardware flow control and add a write timeout to prevent thread hangs
         arduino_serial = serial.Serial(
             port, 
-            9600, 
+            115200, 
             timeout=1.0, 
             write_timeout=2.0,
             rtscts=False,
@@ -79,7 +79,7 @@ def serial_worker():
                 try:
                     arduino_serial = serial.Serial(
                         port, 
-                        9600, 
+                        115200, 
                         timeout=1.0, 
                         write_timeout=2.0,
                         rtscts=False,
@@ -204,12 +204,16 @@ AI_CHOICES = [
     {"name": "Paper",    "emoji": "✋"},
 ]
 
-# Game state for 5-match sequence
-game_allowed_wins = random.choice([0, 1])
+# Game state for match sequence
 game_user_wins = 0
 game_match_count = 0
 game_draw_count = 0
 game_lose_count = 0
+
+# Audio playback loop indices
+game_win_audio_idx = 0
+game_lose_audio_idx = 0
+game_draw_audio_idx = 0
 
 
 # ── Gesture helpers ────────────────────────────────────────────────────────────
@@ -419,14 +423,34 @@ def get_ai_choice():
 
 @app.route("/reset_game", methods=["POST"])
 def reset_game():
-    """Reset the game state for a new 5-match sequence."""
-    global game_allowed_wins, game_user_wins, game_match_count, game_draw_count, game_lose_count
-    game_allowed_wins = random.choice([0, 1])
+    """Reset the game state for a new match sequence."""
+    global game_user_wins, game_match_count, game_draw_count, game_lose_count
     game_user_wins = 0
     game_match_count = 0
     game_draw_count = 0
     game_lose_count = 0
-    return jsonify({"status": "success", "allowed_wins": game_allowed_wins})
+    return jsonify({"status": "success"})
+
+
+def get_recordings(subdir):
+    """Return a sorted list of relative audio file paths inside a subdirectory of Recording."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Recording", subdir)
+    if not os.path.exists(path):
+        return []
+    valid_extensions = (".ogg", ".mp3", ".wav", ".m4a")
+    files = [f for f in os.listdir(path) if f.lower().endswith(valid_extensions)]
+    files.sort()
+    return [f"{subdir}/{f}" for f in files]
+
+
+@app.route("/error_audio")
+def error_audio():
+    """Return a random error audio recording URL if available."""
+    error_files = get_recordings("Error")
+    if error_files:
+        audio_path = random.choice(error_files)
+        return jsonify({"audio_url": f"/recording/{audio_path}"})
+    return jsonify({"audio_url": None})
 
 
 @app.route("/resolve")
@@ -435,7 +459,7 @@ def resolve():
     Snapshot the current player gesture, pick AI move, compute result.
     Returns JSON with player, ai_name, ai_emoji, result, and progress stats.
     """
-    global game_allowed_wins, game_user_wins, game_match_count, game_draw_count, game_lose_count
+    global game_user_wins, game_match_count, game_draw_count, game_lose_count
 
     player = current_gesture
     if player in ("No Hand", "Unknown"):
@@ -447,7 +471,7 @@ def resolve():
     ai = random.choice(AI_CHOICES)
     ai_name = ai["name"]
     result = determine_result(player, ai_name)
-    
+
     if result == "WIN":
         game_user_wins += 1
     elif result == "DRAW":
@@ -458,16 +482,23 @@ def resolve():
     # Send ONLY the AI choice to Arduino
     send_to_arduino(ai_name)
 
-    game_over = (game_match_count >= 5)
+    # Game is over for the user after 3 matches
+    game_over = (game_match_count >= 3)
 
     # Determine which audio recording to play based on outcome
     audio_path = None
     if result == "WIN":
-        audio_path = "UserWin/HanZaw-UserWin.ogg"
+        win_files = get_recordings("UserWin")
+        if win_files:
+            audio_path = random.choice(win_files)
     elif result == "DRAW":
-        audio_path = "Draw/HanZaw.ogg"
+        draw_files = get_recordings("Draw")
+        if draw_files:
+            audio_path = random.choice(draw_files)
     elif result == "LOSE":
-        audio_path = random.choice(["UserLose/HanZaw-UserLose.ogg", "UserLose/HanZaw-UserLose2.ogg"])
+        lose_files = get_recordings("UserLose")
+        if lose_files:
+            audio_path = random.choice(lose_files)
 
     return jsonify({
         "player":       player,
